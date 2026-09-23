@@ -250,19 +250,23 @@ def main():
     print("5) AGGREGATED EVALUATION (mean over 5 stratified folds)")
     print("=" * 72)
     res_df = pd.DataFrame(results)
-    summary = (res_df.groupby(["model", "k"])[
+    # k=None ("all features") must not be dropped by groupby NaN handling
+    res_df["k_label"] = res_df["k"].fillna(-1).astype(int)
+    summary = (res_df.groupby(["model", "k_label"])[
         ["roc_auc", "pr_auc", "balanced_acc", "f1"]]
         .mean().round(4).sort_values("roc_auc", ascending=False))
+    summary.index = summary.index.set_names(["model", "k"])
     print(summary.to_string())
 
     # --------------------------------------------- final model + importances
     best_row = summary.reset_index().iloc[0]
     best_model, best_k = best_row["model"], best_row["k"]
-    best_k = None if pd.isna(best_k) else int(best_k)
-    print(f"\n   best config: {best_model} (chi2 k={best_k})"
+    best_k = None if best_k == -1 else int(best_k)
+    print(f"\n   best config: {best_model} "
+          f"(chi2 k={best_k if best_k else 'all features'})"
           f" - refitting on full data for feature importance")
 
-    fut = client.submit(final_fit, best_k if best_k else 0)
+    fut = client.submit(final_fit, 0 if best_k is None else best_k)
     importances = fut.result()
     print("\n   Top 12 clinical predictors:")
     for name, imp in importances[:12]:

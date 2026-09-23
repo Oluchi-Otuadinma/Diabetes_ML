@@ -7,3 +7,7 @@ dask[distributed]==2026.8.0
 # Data Processing
 pandas==3.0.6
 numpy>=2.0
+
+# Plotting (fold-level analysis, src/plots.py)
+matplotlib==3.11.2
+seaborn==0.13.2
