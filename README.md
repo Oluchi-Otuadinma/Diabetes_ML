@@ -83,6 +83,22 @@ For medical screening, missed diabetics (false negatives) cost more than false a
 
 At this operating point the model flags roughly half of screened patients (precision 0.54 vs the 34.9% base rate — a ~1.55x lift) while still catching ~90% of true diabetics, an appropriate trade-off for a first-pass screening tool; confirmed diagnosis would follow up flagged patients.
 
+**Before vs after (aggregate over all 5 folds, n = 768):**
+
+| model | chi² k | recall @0.5 | recall @HR | precision @0.5 | precision @HR | FN @0.5 | FN @HR | FP @0.5 | FP @HR |
+|---|---|---|---|---|---|---|---|---|---|
+| **LogReg** | all | 0.757 | **0.899** | 0.619 | 0.541 | 65 | **27** | 127 | 205 |
+| LogReg | 12 | 0.750 | **0.899** | 0.611 | 0.523 | 67 | **27** | 129 | 221 |
+| LogReg | 8 | 0.739 | **0.895** | 0.592 | 0.526 | 70 | **28** | 141 | 218 |
+| RF | 12 | 0.743 | **0.884** | 0.640 | 0.537 | 69 | **31** | 114 | 207 |
+| RF | 8 | 0.750 | **0.880** | 0.639 | 0.523 | 67 | **32** | 115 | 218 |
+| RF | all | 0.743 | **0.869** | 0.639 | 0.545 | 69 | **35** | 115 | 197 |
+| **totals** | | | | | | **407** | **180** | **741** | **1266** |
+
+Switching to the screening threshold cuts missed diabetics by **56% (407 → 180)**; the price is +71% false alarms (741 → 1,266), i.e. ~525 extra false alarms to prevent ~227 missed diagnoses — the intended trade for a screening tool.
+
+![High-recall impact](assets/high_recall_impact.png)
+
 ## 📊 Risk trends — how each predictor moves diabetes risk
 
 **Main takeaway:** diabetes risk rises steadily with glucose — observed prevalence climbs from ~5% at glucose ≈ 50–90 mg/dL to ~82% above ~155 mg/dL, and the model's risk curve tracks the same monotonic climb. The interaction Glucose x Age (a young person with high glucose is already high-risk) and BMI show the same upward shape; QUICKI (insulin sensitivity) is surprisingly flat/non-monotonic in this cohort, and Age rises then plateaus (older members of this 1994 cohort were diagnosed earlier in life).

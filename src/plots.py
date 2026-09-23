@@ -42,6 +42,11 @@ def load() -> pd.DataFrame:
     df["fp"] = cm.apply(lambda m: m[0, 1])
     df["fn"] = cm.apply(lambda m: m[1, 0])
     df["tp"] = cm.apply(lambda m: m[1, 1])
+    cm_hr = df["cm_hr"].apply(json.loads).apply(np.array)
+    df["tn_hr"] = cm_hr.apply(lambda m: m[0, 0])
+    df["fp_hr"] = cm_hr.apply(lambda m: m[0, 1])
+    df["fn_hr"] = cm_hr.apply(lambda m: m[1, 0])
+    df["tp_hr"] = cm_hr.apply(lambda m: m[1, 1])
     df["recall"] = df["tp"] / (df["tp"] + df["fn"])
     df["specificity"] = df["tn"] / (df["tn"] + df["fp"])
     df["test_pos_rate"] = (df["tp"] + df["fn"]) / df["n_test"]
@@ -131,6 +136,53 @@ def stratification_check(df):
     plt.close(fig)
 
 
+def high_recall_impact(df):
+    """Before (0.5 threshold) vs after (high-recall threshold) comparison."""
+    fig, axes = plt.subplots(1, 2, figsize=(17, 6.5))
+
+    # -- panel A: missed diabetics (FN) + false alarms (FP), per config -----   
+    agg = df.groupby(["model", "k"])[["fn", "fn_hr", "fp", "fp_hr"]].sum()
+    labels = [f"{m} (k={k if k > 0 else 'all'})" for m, k in agg.index]
+    x = np.arange(len(agg))
+    w = 0.2
+    ax = axes[0]
+    ax.bar(x - w, agg.fn, w, label="FN @ default 0.5", color="#7570b3")
+    ax.bar(x, agg.fn_hr, w, label="FN @ high-recall", color="#1b9e77")
+    ax.bar(x + w, agg.fp, w, label="FP @ default 0.5", color="#d95f02", alpha=0.55)
+    ax.bar(x + 2 * w, agg.fp_hr, w, label="FP @ high-recall", color="#d95f02",
+           hatch="//", alpha=0.55)
+    ax.set(title="Total errors across 5 folds: missed diabetics (FN) "
+                 "vs false alarms (FP)",
+           xticks=x, xticklabels=labels, ylabel="count (all folds, n=768)")
+    ax.tick_params(axis="x", rotation=30, labelsize=12)
+    ax.legend(fontsize=12)
+    for i, (fn_a, fn_b) in enumerate(zip(agg.fn, agg.fn_hr)):
+        ax.text(i - w, fn_a + 6, int(fn_a), ha="center", fontsize=11)
+        ax.text(i, fn_b + 6, int(fn_b), ha="center", fontsize=11)
+
+    # -- panel B: best config, recall/precision per fold, before vs after ---
+    best, _ = best_and_other(df)
+    ax = axes[1]
+    rec05 = best["tp"] / (best["tp"] + best["fn"])
+    recHR = best.recall_hr
+    pre05 = best.precision
+    preHR = best.precision_hr
+    ax.plot(best.fold, rec05, "o--", color="#7570b3",
+            label="recall @ 0.5", alpha=0.85)
+    ax.plot(best.fold, recHR, "o-", color="#1b9e77", label="recall @ tuned thr")
+    ax.plot(best.fold, pre05, "s--", color="#d95f02",
+            label="precision @ 0.5", alpha=0.85)
+    ax.plot(best.fold, preHR, "s-", color="#e7298a", label="precision @ tuned thr")
+    ax.axhline(0.9, color="gray", ls=":", lw=1.5, label="screening target (0.9)")
+    ax.set(title=f"Per-fold trade-off — {best.config.iloc[0]}",
+           xlabel="fold", xticks=range(5), ylim=(0.3, 1.02))
+    ax.legend(fontsize=12, loc="lower left")
+
+    fig.tight_layout()
+    fig.savefig(OUT / "high_recall_impact.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main():
     df = load()
     print(f"loaded {len(df)} rows from {RESULTS}")
@@ -139,7 +191,8 @@ def main():
     fold_variance(df)
     error_decomposition(df)
     stratification_check(df)
-    print(f"saved 4 figures to {OUT.resolve()}")
+    high_recall_impact(df)
+    print(f"saved 5 figures to {OUT.resolve()}")
 
 
 if __name__ == "__main__":
