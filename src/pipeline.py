@@ -23,12 +23,14 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.metrics import (
     roc_auc_score,
     average_precision_score,
     balanced_accuracy_score,
     f1_score,
+    precision_score,
+    recall_score,
     confusion_matrix,
 )
 from dask.distributed import Client, LocalCluster
@@ -37,6 +39,7 @@ DATA_PATH = "data/pima-indians-diabetes.csv"
 N_WORKERS = 4           # worker processes (= "nodes" in this cluster)
 THREADS_PER_WORKER = 2
 RANDOM_STATE = 42
+TARGET_RECALL = 0.90    # medical screening: catch >=90% of diabetics
 
 COLS = [
     "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
@@ -108,6 +111,19 @@ def build_features(part: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([X, y], axis=1)
 
 
+def threshold_for_recall(y_true, proba, target_recall):
+    """Highest decision threshold whose recall (on this data) >= target.
+    Maximises precision subject to the recall constraint."""
+    order = np.argsort(-proba)
+    y_sorted = np.asarray(y_true)[order]
+    tps = np.cumsum(y_sorted)
+    recalls = tps / tps[-1]
+    ok = np.nonzero(recalls >= target_recall)[0]
+    if len(ok) == 0:
+        return 0.0
+    return float(proba[order[ok[0]]])
+
+
 # ---------------------------------------------------------------------------
 # 3+4. Per-fold train/score - executed ON THE WORKERS
 # ---------------------------------------------------------------------------
@@ -136,18 +152,41 @@ def train_and_score_fold(payload):
 
     clf.fit(X_tr, y_tr)
     proba = clf.predict_proba(X_te)[:, 1]
-    pred = (proba >= 0.5).astype(int)
 
-    return {
-        "model": model_name,
-        "k": sel_k,
+    # --- default 0.5-threshold operating point -----------------------------
+    pred = (proba >= 0.5).astype(int)
+    default = {
         "roc_auc": roc_auc_score(y_te, proba),
         "pr_auc": average_precision_score(y_te, proba),
         "balanced_acc": balanced_accuracy_score(y_te, pred),
         "f1": f1_score(y_te, pred),
+        "cm": confusion_matrix(y_te, pred).tolist(),
+        "precision": precision_score(y_te, pred, zero_division=0),
+    }
+    # --- high-recall operating point: threshold tuned on TRAIN only --------
+    # Pick the threshold on out-of-fold training predictions that achieves
+    # the target recall, then apply it to the untouched test fold.
+    n_tr_splits = min(5, int(y_tr.value_counts().min()))
+    oof = cross_val_predict(clf, X_tr, y_tr, cv=n_tr_splits,
+                            method="predict_proba")[:, 1]
+    thr = threshold_for_recall(y_tr, oof, TARGET_RECALL)
+    pred_hr = (proba >= thr).astype(int)
+    cm_hr = confusion_matrix(y_te, pred_hr)
+    high_recall = {
+        "threshold": thr,
+        "recall_hr": recall_score(y_te, pred_hr, zero_division=0),
+        "precision_hr": precision_score(y_te, pred_hr, zero_division=0),
+        "f1_hr": f1_score(y_te, pred_hr, zero_division=0),
+        "cm_hr": cm_hr.tolist(),
+    }
+
+    return {
+        "model": model_name,
+        "k": sel_k,
         "n_train": len(y_tr),
         "n_test": len(y_te),
-        "cm": confusion_matrix(y_te, pred).tolist(),
+        **default,
+        **high_recall,
     }
 
 
@@ -258,6 +297,14 @@ def main():
     summary.index = summary.index.set_names(["model", "k"])
     print(summary.to_string())
 
+    print("\n   HIGH-RECALL OPERATING POINT (threshold tuned per fold on train "
+          f"OOF preds, target recall >= {TARGET_RECALL:.0%}):")
+    hr = (res_df.groupby(["model", "k_label"])[
+        ["recall_hr", "precision_hr", "f1_hr", "threshold"]]
+        .mean().round(4).sort_values("recall_hr", ascending=False))
+    hr.index = hr.index.set_names(["model", "k"])
+    print(hr.to_string())
+
     # --------------------------------------------- final model + importances
     best_row = summary.reset_index().iloc[0]
     best_model, best_k = best_row["model"], best_row["k"]
@@ -265,6 +312,12 @@ def main():
     print(f"\n   best config: {best_model} "
           f"(chi2 k={best_k if best_k else 'all features'})"
           f" - refitting on full data for feature importance")
+    hr_best = hr.reset_index().iloc[0]
+    print(f"   best high-recall config: {hr_best['model']} "
+          f"(k={hr_best['k'] if hr_best['k'] != -1 else 'all features'}), "
+          f"threshold={hr_best['threshold']:.3f}, "
+          f"recall={hr_best['recall_hr']:.3f}, "
+          f"precision={hr_best['precision_hr']:.3f}")
 
     fut = client.submit(final_fit, 0 if best_k is None else best_k)
     importances = fut.result()
