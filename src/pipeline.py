@@ -33,7 +33,7 @@ from sklearn.metrics import (
 )
 from dask.distributed import Client, LocalCluster
 
-DATA_PATH = "pima-indians-diabetes.csv"
+DATA_PATH = "data/pima-indians-diabetes.csv"
 N_WORKERS = 4           # worker processes (= "nodes" in this cluster)
 THREADS_PER_WORKER = 2
 RANDOM_STATE = 42
@@ -269,12 +269,12 @@ def main():
         print(f"     {name:<28} {imp:.4f}")
 
     # Persist a small results file
-    res_df.to_csv("cv_results.csv", index=False)
+    res_df.to_csv("results/cv_results.csv", index=False)
     pd.DataFrame(importances, columns=["feature", "importance"]).to_csv(
-        "feature_importance.csv", index=False)
+        "results/feature_importance.csv", index=False)
 
     elapsed = time.time() - t0
-    print(f"\n   saved: cv_results.csv, feature_importance.csv")
+    print(f"\n   saved: results/cv_results.csv, results/feature_importance.csv")
     print(f"   total pipeline wall time: {elapsed:.2f}s")
 
     client.close()
